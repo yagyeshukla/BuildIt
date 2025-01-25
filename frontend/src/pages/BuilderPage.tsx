@@ -10,10 +10,15 @@ import {
   FileText,
   Code,
   Eye,
+  CheckCircle,
+  Circle,
+  Clock,
 } from "lucide-react";
 import Editor from "@monaco-editor/react";
 import axios from "axios";
 import { BACKEND_URL } from "../config";
+import { Step, FileItem, StepType } from "../types/index";
+import { parseXml } from "../steps";
 
 const BuilderPage = () => {
   const location = useLocation();
@@ -21,41 +26,85 @@ const BuilderPage = () => {
   const [expandedFolders, setExpandedFolders] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"code" | "preview">("code");
+  const [steps, setSteps] = useState<Step[]>([]);
+  const [files, setFiles] = useState<FileItem[]>([]);
+
+  console.log("STEPS :", steps);
+
+  useEffect(() => {
+    let originalFiles = [...files];
+    let updateHappened = false;
+    steps
+      .filter(({ status }) => status === "pending")
+      .map((step) => {
+        updateHappened = true;
+        if (step?.type === StepType.CreateFile) {
+          let parsedPath = step.path?.split("/") ?? []; // ["src", "components", "App.tsx"]
+          let currentFileStructure = [...originalFiles]; // {}
+          let finalAnswerRef = currentFileStructure;
+
+          let currentFolder = "";
+          while (parsedPath.length) {
+            currentFolder = `${currentFolder}/${parsedPath[0]}`;
+            let currentFolderName = parsedPath[0];
+            parsedPath = parsedPath.slice(1);
+
+            if (!parsedPath.length) {
+              // final file
+              let file = currentFileStructure.find(
+                (x) => x.path === currentFolder
+              );
+              if (!file) {
+                currentFileStructure.push({
+                  name: currentFolderName,
+                  type: "file",
+                  path: currentFolder,
+                  content: step.code,
+                });
+              } else {
+                file.content = step.code;
+              }
+            } else {
+              /// in a folder
+              let folder = currentFileStructure.find(
+                (x) => x.path === currentFolder
+              );
+              if (!folder) {
+                // create the folder
+                currentFileStructure.push({
+                  name: currentFolderName,
+                  type: "folder",
+                  path: currentFolder,
+                  children: [],
+                });
+              }
+
+              currentFileStructure = currentFileStructure.find(
+                (x) => x.path === currentFolder
+              )!.children!;
+            }
+          }
+          originalFiles = finalAnswerRef;
+        }
+      });
+
+    if (updateHappened) {
+      setFiles(originalFiles);
+      setSteps((steps) =>
+        steps.map((s: Step) => {
+          return {
+            ...s,
+            status: "completed",
+          };
+        })
+      );
+    }
+    console.log(files);
+  }, [steps, files]);
 
   // Mock steps for demonstration
-  const steps = [
-    "Initialize project structure",
-    "Set up development environment",
-    "Create main layout components",
-    "Implement responsive design",
-    "Add interactive features",
-    "Optimize for performance",
-  ];
 
   // Mock file structure with content
-  const files = [
-    {
-      name: "index.html",
-      type: "file",
-      content:
-        '<!DOCTYPE html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <title>My Website</title>\n  </head>\n  <body>\n    <div id="root"></div>\n  </body>\n</html>',
-    },
-    {
-      name: "src",
-      type: "folder",
-      children: [
-        {
-          name: "App.tsx",
-          type: "file",
-          content:
-            'import React from "react";\n\nfunction App() {\n  return (\n    <div>\n      <h1>Hello World</h1>\n    </div>\n  );\n}\n\nexport default App;',
-        },
-        { name: "components", type: "folder", children: [] },
-        { name: "styles", type: "folder", children: [] },
-      ],
-    },
-    { name: "public", type: "folder", children: [] },
-  ];
 
   const toggleFolder = (path: string) => {
     setExpandedFolders((prev) =>
@@ -181,6 +230,9 @@ const BuilderPage = () => {
         prompt: prompt.trim(),
       });
       const { prompts, uiPrompts } = data;
+      const stepsArr: Step[] = parseXml(uiPrompts[0]);
+      setSteps(stepsArr.map((step) => ({ ...step, status: "pending" })));
+      console.log(steps);
       const stepsResponse = await axios.post(`${BACKEND_URL}/chat`, {
         messages: [...prompts, prompt].map((text) => ({
           role: "user",
@@ -209,16 +261,24 @@ const BuilderPage = () => {
           <ListTodo className="h-6 w-6 text-indigo-400" />
           <h2 className="text-xl font-semibold text-gray-100">Build Steps</h2>
         </div>
-        <div className="space-y-4">
+        <div className="space-y-0">
           {steps.map((step, index) => (
             <div
               key={index}
               className="flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-700"
             >
-              <div className="w-6 h-6 rounded-full bg-indigo-900 text-indigo-400 flex items-center justify-center text-sm font-medium">
-                {index + 1}
+              <div className="w-6 h-6 rounded-full flex items-center justify-center text-sm font-medium">
+                <div className="flex items-center gap-2">
+                  {step.status === "completed" ? (
+                    <CheckCircle className="w-5 h-5 text-green-500" />
+                  ) : step.status === "in-progress" ? (
+                    <Clock className="w-5 h-5 text-blue-400" />
+                  ) : (
+                    <Circle className="w-5 h-5 text-gray-600" />
+                  )}
+                </div>
               </div>
-              <span className="text-gray-300">{step}</span>
+              <span className="text-gray-300">{step.title}</span>
             </div>
           ))}
         </div>
