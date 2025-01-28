@@ -80,7 +80,9 @@ app.post("/chat", async (req: Request, res: Response) => {
   });
   const ans = result.response.text();
   console.log(ans);
-  res.json({});
+  res.json({
+    response: ans,
+  });
 });
 
 // async function main() {

@@ -19,15 +19,21 @@ import axios from "axios";
 import { BACKEND_URL } from "../config";
 import { Step, FileItem, StepType } from "../types/index";
 import { parseXml } from "../steps";
+import { useWebContainer } from "../hooks/useWebContainer";
+import { FileNode, WebContainer } from "@webcontainer/api";
+import { PreviewFrame } from "../components/PreviewFrame";
+import { TabView } from "../components/TabView";
+import { CodeEditor } from "../components/CodeEditor";
 
 const BuilderPage = () => {
   const location = useLocation();
   const { prompt } = location.state || { prompt: "" };
   const [expandedFolders, setExpandedFolders] = useState<string[]>([]);
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
   const [activeTab, setActiveTab] = useState<"code" | "preview">("code");
   const [steps, setSteps] = useState<Step[]>([]);
   const [files, setFiles] = useState<FileItem[]>([]);
+  const webcontainer = useWebContainer();
 
   console.log("STEPS :", steps);
 
@@ -102,6 +108,56 @@ const BuilderPage = () => {
     console.log(files);
   }, [steps, files]);
 
+  useEffect(() => {
+    const createMountStructure = (files: FileItem[]): Record<string, any> => {
+      const mountStructure: Record<string, any> = {};
+
+      const processFile = (file: FileItem, isRootFolder: boolean) => {
+        if (file.type === "folder") {
+          // For folders, create a directory entry
+          mountStructure[file.name] = {
+            directory: file.children
+              ? Object.fromEntries(
+                  file.children.map((child) => [
+                    child.name,
+                    processFile(child, false),
+                  ])
+                )
+              : {},
+          };
+        } else if (file.type === "file") {
+          if (isRootFolder) {
+            mountStructure[file.name] = {
+              file: {
+                contents: file.content || "",
+              },
+            };
+          } else {
+            // For files, create a file entry with contents
+            return {
+              file: {
+                contents: file.content || "",
+              },
+            };
+          }
+        }
+
+        return mountStructure[file.name];
+      };
+
+      // Process each top-level file/folder
+      files.forEach((file) => processFile(file, true));
+
+      return mountStructure;
+    };
+
+    const mountStructure = createMountStructure(files);
+
+    // Mount the structure if WebContainer is available
+    console.log(mountStructure);
+    webcontainer?.mount(mountStructure);
+  }, [files, webcontainer]);
+
   // Mock steps for demonstration
 
   // Mock file structure with content
@@ -159,13 +215,19 @@ const BuilderPage = () => {
         <div key={currentPath}>
           <div
             className={`py-1 flex items-center space-x-1 hover:bg-gray-800 rounded px-2 cursor-pointer ${
-              selectedFile === item.name ? "bg-gray-800" : ""
+              selectedFile?.name === item.name ? "bg-gray-800" : ""
             }`}
             onClick={() => {
               if (item.type === "folder") {
                 toggleFolder(currentPath);
               } else {
-                setSelectedFile(item.name);
+                setSelectedFile({
+                  name: item.name,
+                  type: "file",
+                  path: item.path,
+                  content: item.content,
+                  children: item.children,
+                });
                 setActiveTab("code");
               }
             }}
@@ -243,7 +305,14 @@ const BuilderPage = () => {
           ],
         })),
       });
-      console.log(data);
+      console.log("CHAT DATA :", stepsResponse.data.response);
+      setSteps((s) => [
+        ...s,
+        ...parseXml(stepsResponse.data.response).map((x) => ({
+          ...x,
+          status: "pending" as "pending",
+        })),
+      ]);
     } catch (error) {
       console.error(error);
     }
@@ -311,7 +380,7 @@ const BuilderPage = () => {
               <div className="flex items-center space-x-2">
                 <FileText className="h-6 w-6 text-indigo-400" />
                 <h2 className="text-xl font-semibold text-gray-100">
-                  {selectedFile || "Select a file"}
+                  {selectedFile?.name || "Select a file"}
                 </h2>
               </div>
               <div className="flex space-x-2">
@@ -320,37 +389,41 @@ const BuilderPage = () => {
               </div>
             </div>
 
-            {selectedFile ? (
-              activeTab === "code" ? (
-                <div className="h-[calc(100vh-300px)] rounded-lg overflow-hidden">
-                  <Editor
-                    height="100%"
-                    defaultLanguage={getFileLanguage(selectedFile)}
-                    value={getFileContent(selectedFile) || ""}
-                    theme="vs-dark"
-                    options={{
-                      minimap: { enabled: false },
-                      fontSize: 14,
-                      lineNumbers: "on",
-                      readOnly: false,
-                      wordWrap: "on",
-                    }}
-                  />
-                </div>
-              ) : (
-                <div className="h-[calc(100vh-300px)] bg-white rounded-lg">
-                  <iframe
-                    src="/preview"
-                    className="w-full h-full rounded-lg"
-                    title="Website Preview"
-                  />
-                </div>
-              )
-            ) : (
-              <div className="h-[calc(100vh-300px)] flex items-center justify-center text-gray-500">
-                Select a file to view its contents
+            {/* {activeTab === "code" ? (
+              <div className="h-[calc(100vh-300px)] rounded-lg overflow-hidden">
+                <Editor
+                  height="100%"
+                  defaultLanguage={getFileLanguage(selectedFile as string)}
+                  value={getFileContent(selectedFile as string) || ""}
+                  theme="vs-dark"
+                  options={{
+                    minimap: { enabled: false },
+                    fontSize: 14,
+                    lineNumbers: "on",
+                    readOnly: false,
+                    wordWrap: "on",
+                  }}
+                />
               </div>
-            )}
+            ) : (
+              <PreviewFrame
+                webContainer={webcontainer as WebContainer}
+                files={files}
+              />
+            )} */}
+
+            <div className="col-span-2 bg-gray-900 rounded-lg shadow-lg p-4 h-[calc(100vh-8rem)]">
+              <TabView activeTab={activeTab} onTabChange={setActiveTab} />
+              <div className="h-[calc(100%-4rem)]">
+                {activeTab === "code" ? (
+                  <CodeEditor file={selectedFile} />
+                ) : (
+                  webcontainer && (
+                    <PreviewFrame webContainer={webcontainer} files={files} />
+                  )
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>
